@@ -1,0 +1,17 @@
+fastmcp>=2.0.0
+faker>=33.0.0
+mimesis>=18.0.0
+httpx[http2]>=0.28.0
+sqlalchemy>=2.0.40
+aiosqlite>=0.22.0
+pydantic>=2.10.0
+twilio>=9.0.0
+mailslurp-client>=16.0.0
+patchright>=0.5.0
+camoufox[geoip]>=0.4.0
+ipinfo>=5.0.0
+geoip2>=4.0.0
+stem>=1.8.0
+torpy>=1.1.0
+praw>=7.8.0
+twikit>=2.0.0

@@ -1,0 +1,105 @@
+"""Twilio SDK wrapper for phone number provisioning and SMS.
+
+Requires env vars: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Optional
+
+from ..config import TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN
+
+logger = logging.getLogger(__name__)
+
+_SDK_AVAILABLE = False
+try:
+    from twilio.rest import Client as TwilioClient
+    _SDK_AVAILABLE = True
+except ImportError:
+    logger.info("twilio not installed — Twilio provider unavailable")
+
+
+def _check_available() -> None:
+    if not _SDK_AVAILABLE:
+        raise RuntimeError("twilio not installed. Run: pip install twilio")
+    if not TWILIO_ACCOUNT_SID or not TWILIO_AUTH_TOKEN:
+        raise RuntimeError("TWILIO_ACCOUNT_SID and TWILIO_AUTH_TOKEN environment variables not set")
+
+
+def _get_client() -> TwilioClient:
+    _check_available()
+    return TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
+
+
+async def search_available_numbers(country: str = "US", limit: int = 5) -> list[dict]:
+    """Search for available phone numbers to purchase."""
+    client = _get_client()
+    numbers = client.available_phone_numbers(country).local.list(
+        sms_enabled=True,
+        limit=limit,
+    )
+    return [
+        {
+            "number": n.phone_number,
+            "friendly_name": n.friendly_name,
+            "locality": getattr(n, "locality", ""),
+            "region": getattr(n, "region", ""),
+            "capabilities": {
+                "sms": getattr(n.capabilities, "sms", True) if hasattr(n, "capabilities") else True,
+                "voice": getattr(n.capabilities, "voice", True) if hasattr(n, "capabilities") else True,
+            },
+        }
+        for n in numbers
+    ]
+
+
+async def provision_number(country: str = "US") -> dict:
+    """Purchase and provision a new phone number.
+
+    Returns dict with: number, sid, capabilities, provider.
+    """
+    client = _get_client()
+
+    # Find available number
+    available = client.available_phone_numbers(country).local.list(
+        sms_enabled=True,
+        limit=1,
+    )
+    if not available:
+        raise RuntimeError(f"No available numbers in {country}")
+
+    # Purchase
+    incoming = client.incoming_phone_numbers.create(
+        phone_number=available[0].phone_number,
+    )
+
+    return {
+        "number": incoming.phone_number,
+        "provider_id": incoming.sid,
+        "country": country,
+        "capabilities": {"sms": True, "voice": True},
+        "provider": "twilio",
+    }
+
+
+async def get_incoming_sms(phone_number: str, limit: int = 20) -> list[dict]:
+    """Fetch received SMS messages for a phone number."""
+    client = _get_client()
+    messages = client.messages.list(to=phone_number, limit=limit)
+    return [
+        {
+            "id": m.sid,
+            "from_number": m.from_,
+            "body": m.body,
+            "received_at": str(m.date_sent) if m.date_sent else str(m.date_created),
+        }
+        for m in messages
+    ]
+
+
+async def release_number(sid: str) -> bool:
+    """Release (delete) a Twilio phone number."""
+    client = _get_client()
+    client.incoming_phone_numbers(sid).delete()
+    return True

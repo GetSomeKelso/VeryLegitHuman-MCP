@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=75.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "verylegithuman-mcp"
+version = "0.1.0"
+description = "VeryLegitHuman MCP — 54-tool persona lifecycle server for authorized OSINT and red team operations"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=2.0.0",
+    "faker>=33.0.0",
+    "mimesis>=18.0.0",
+    "httpx[http2]>=0.28.0",
+    "sqlalchemy>=2.0.40",
+    "aiosqlite>=0.22.0",
+    "pydantic>=2.10.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
