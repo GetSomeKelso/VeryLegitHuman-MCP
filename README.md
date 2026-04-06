@@ -309,7 +309,72 @@ Data persists in `data/db/verylegithuman.db` across server restarts.
 
 ---
 
-## Example Workflow
+## Burp Suite MCP Integration
+
+VeryLegitHuman is designed to work alongside [Burp Suite's MCP server](https://portswigger.net/burp/documentation/desktop/extensions/mcp) when both are connected to the same Claude session. VeryLegitHuman acts, Burp observes — the combination provides full visibility into what happens at the HTTP layer during persona operations.
+
+### What This Enables
+
+| Scenario | VeryLegitHuman Role | Burp Suite Role |
+|----------|-------------------|-----------------|
+| **Account Registration** | Generates persona, provisions email, drives stealth browser through signup flow | Captures every HTTP request — reveals fingerprinting, bot detection, hidden tracking |
+| **Anti-Detect Verification** | Launches Patchright (Chromium) and Camoufox (Firefox) against fingerprint test sites | Inspects outbound headers for TLS/User-Agent inconsistencies between browser-reported and HTTP-level identity |
+| **Proxy Chain Validation** | Configures residential proxy or Tor, routes browser through it | Confirms no IP or DNS leaks in actual HTTP traffic, checks for X-Forwarded-For / Via header leakage |
+| **Target Recon** | Loads target site in stealth browser, checks for CAPTCHAs and challenge pages | Probes response headers (Server, CSP, Set-Cookie), identifies WAF vendor (Cloudflare, DataDome, Akamai, Kasada) |
+| **Verification Interception** | Handles email/SMS OTP flow end-to-end | Captures the OTP submission request for rate limit analysis, saves to Repeater for replay testing |
+
+### Setup
+
+Run both MCP servers in your Claude Desktop config:
+
+```json
+{
+  "mcpServers": {
+    "verylegithuman": {
+      "command": "/path/to/venv/bin/python",
+      "args": ["/path/to/verylegithuman-mcp/server.py"]
+    },
+    "burp": {
+      "command": "...",
+      "args": ["..."]
+    }
+  }
+}
+```
+
+When both are active, Claude automatically chains them — VeryLegitHuman tools drive the action, Burp tools (`get_proxy_http_history`, `get_proxy_http_history_regex`, `create_repeater_tab`, `send_http1_request`, `get_scanner_issues`) analyze the resulting traffic. The operational playbooks are defined in `CLAUDE.md` and Claude follows them when tasks match.
+
+### Example: Stealth Registration with Traffic Analysis
+
+```
+You: Register azure-falcon-37 on example.com and tell me what they're tracking
+
+Claude: [VLH: create_email, configure_proxy, launch_browser]
+        Email provisioned, proxy set to Austin TX, Patchright session started.
+
+        [VLH: browser_goto → example.com/signup]
+        [VLH: browser_type, browser_click → fills form, submits]
+
+        [Burp: get_proxy_http_history_regex("signup|register")]
+        Captured 4 requests during registration:
+        - POST /api/register — sends device_id hash, screen resolution, timezone
+        - GET /cdn-cgi/challenge-platform — Cloudflare bot check
+        - POST /api/fingerprint — canvas hash, WebGL renderer, audio context
+
+        [VLH: check_inbox, extract_verification]
+        OTP received: 847291
+
+        [VLH: browser_type → enters OTP]
+        [Burp: get_proxy_http_history_regex("verify|otp")]
+        OTP submission POST has no rate limiting header. Token is single-use.
+
+        Summary: Target uses Cloudflare + custom fingerprinting. Registration
+        collects device_id, canvas hash, and timezone. No rate limit on OTP endpoint.
+```
+
+---
+
+## Example Workflow (Standalone)
 
 ```
 You: Create a persona for a 28-year-old female software engineer in Austin, TX
