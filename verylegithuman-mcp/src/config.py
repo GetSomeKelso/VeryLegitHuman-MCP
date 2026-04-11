@@ -27,8 +27,6 @@ PROJECT_ROOT = Path(__file__).parent.parent
 DATA_DIR = PROJECT_ROOT / "data"
 DB_DIR = DATA_DIR / "db"
 FACES_DIR = DATA_DIR / "faces"
-DATABASE_URL = f"sqlite+aiosqlite:///{DB_DIR / 'verylegithuman.db'}"
-
 # --- Identity Generation ---
 DEFAULT_LOCALE = _env_str("VLH_DEFAULT_LOCALE", "en_US")
 BULK_GENERATE_MAX = _env_int_clamped("VLH_BULK_MAX", 20, 1, 50)

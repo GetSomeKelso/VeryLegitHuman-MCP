@@ -1,10 +1,12 @@
 """Twilio SDK wrapper for phone number provisioning and SMS.
 
 Requires env vars: TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN.
+All sync SDK calls wrapped in asyncio.to_thread to avoid blocking the event loop.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -32,13 +34,9 @@ def _get_client() -> TwilioClient:
     return TwilioClient(TWILIO_ACCOUNT_SID, TWILIO_AUTH_TOKEN)
 
 
-async def search_available_numbers(country: str = "US", limit: int = 5) -> list[dict]:
-    """Search for available phone numbers to purchase."""
+def _sync_search(country: str, limit: int):
     client = _get_client()
-    numbers = client.available_phone_numbers(country).local.list(
-        sms_enabled=True,
-        limit=limit,
-    )
+    numbers = client.available_phone_numbers(country).local.list(sms_enabled=True, limit=limit)
     return [
         {
             "number": n.phone_number,
@@ -54,26 +52,12 @@ async def search_available_numbers(country: str = "US", limit: int = 5) -> list[
     ]
 
 
-async def provision_number(country: str = "US") -> dict:
-    """Purchase and provision a new phone number.
-
-    Returns dict with: number, sid, capabilities, provider.
-    """
+def _sync_provision(country: str):
     client = _get_client()
-
-    # Find available number
-    available = client.available_phone_numbers(country).local.list(
-        sms_enabled=True,
-        limit=1,
-    )
+    available = client.available_phone_numbers(country).local.list(sms_enabled=True, limit=1)
     if not available:
         raise RuntimeError(f"No available numbers in {country}")
-
-    # Purchase
-    incoming = client.incoming_phone_numbers.create(
-        phone_number=available[0].phone_number,
-    )
-
+    incoming = client.incoming_phone_numbers.create(phone_number=available[0].phone_number)
     return {
         "number": incoming.phone_number,
         "provider_id": incoming.sid,
@@ -83,8 +67,7 @@ async def provision_number(country: str = "US") -> dict:
     }
 
 
-async def get_incoming_sms(phone_number: str, limit: int = 20) -> list[dict]:
-    """Fetch received SMS messages for a phone number."""
+def _sync_get_sms(phone_number: str, limit: int):
     client = _get_client()
     messages = client.messages.list(to=phone_number, limit=limit)
     return [
@@ -98,8 +81,27 @@ async def get_incoming_sms(phone_number: str, limit: int = 20) -> list[dict]:
     ]
 
 
-async def release_number(sid: str) -> bool:
-    """Release (delete) a Twilio phone number."""
+def _sync_release(sid: str):
     client = _get_client()
     client.incoming_phone_numbers(sid).delete()
     return True
+
+
+async def search_available_numbers(country: str = "US", limit: int = 5) -> list[dict]:
+    _check_available()
+    return await asyncio.to_thread(_sync_search, country, limit)
+
+
+async def provision_number(country: str = "US") -> dict:
+    _check_available()
+    return await asyncio.to_thread(_sync_provision, country)
+
+
+async def get_incoming_sms(phone_number: str, limit: int = 20) -> list[dict]:
+    _check_available()
+    return await asyncio.to_thread(_sync_get_sms, phone_number, limit)
+
+
+async def release_number(sid: str) -> bool:
+    _check_available()
+    return await asyncio.to_thread(_sync_release, sid)

@@ -1,11 +1,12 @@
 """Reddit client via PRAW for direct posting and interaction.
 
 Requires env vars: REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET.
-Rate limit: 100 queries/min (auto-handled by PRAW).
+All sync PRAW calls wrapped in asyncio.to_thread to avoid blocking the event loop.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -28,8 +29,7 @@ def _check_available() -> None:
         raise RuntimeError("REDDIT_CLIENT_ID and REDDIT_CLIENT_SECRET environment variables not set")
 
 
-def _get_reddit(username: str, password: str) -> praw.Reddit:
-    """Create an authenticated Reddit instance for a persona."""
+def _get_reddit(username: str, password: str):
     _check_available()
     return praw.Reddit(
         client_id=REDDIT_CLIENT_ID,
@@ -40,32 +40,13 @@ def _get_reddit(username: str, password: str) -> praw.Reddit:
     )
 
 
-async def post_to_subreddit(
-    username: str,
-    password: str,
-    subreddit: str,
-    title: str,
-    content: str,
-    link_url: Optional[str] = None,
-) -> dict:
-    """Post to a subreddit.
-
-    Args:
-        username: Reddit username for the persona.
-        password: Reddit password for the persona.
-        subreddit: Target subreddit name (without r/).
-        title: Post title.
-        content: Post body (self-text) or ignored if link_url provided.
-        link_url: Optional URL for a link post.
-    """
+def _sync_post(username, password, subreddit, title, content, link_url):
     reddit = _get_reddit(username, password)
     sub = reddit.subreddit(subreddit)
-
     if link_url:
         submission = sub.submit(title=title, url=link_url)
     else:
         submission = sub.submit(title=title, selftext=content)
-
     return {
         "post_id": submission.id,
         "url": f"https://reddit.com{submission.permalink}",
@@ -75,26 +56,32 @@ async def post_to_subreddit(
     }
 
 
+def _sync_comment(username, password, post_url, comment):
+    reddit = _get_reddit(username, password)
+    submission = reddit.submission(url=post_url)
+    reply = submission.reply(comment)
+    return {
+        "comment_id": reply.id,
+        "post_url": post_url,
+        "platform": "reddit",
+    }
+
+
+async def post_to_subreddit(
+    username: str,
+    password: str,
+    subreddit: str,
+    title: str,
+    content: str,
+    link_url: Optional[str] = None,
+) -> dict:
+    return await asyncio.to_thread(_sync_post, username, password, subreddit, title, content, link_url)
+
+
 async def post_comment(
     username: str,
     password: str,
     post_url: str,
     comment: str,
 ) -> dict:
-    """Comment on a Reddit post.
-
-    Args:
-        username: Reddit username.
-        password: Reddit password.
-        post_url: Full URL of the post to comment on.
-        comment: Comment text.
-    """
-    reddit = _get_reddit(username, password)
-    submission = reddit.submission(url=post_url)
-    reply = submission.reply(comment)
-
-    return {
-        "comment_id": reply.id,
-        "post_url": post_url,
-        "platform": "reddit",
-    }
+    return await asyncio.to_thread(_sync_comment, username, password, post_url, comment)

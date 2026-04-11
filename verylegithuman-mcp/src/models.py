@@ -1,4 +1,9 @@
-"""Pydantic models and SQLAlchemy ORM for VeryLegitHuman MCP."""
+"""Pydantic models for VeryLegitHuman MCP.
+
+Note: The SQLAlchemy ORM classes below are legacy from initial scaffolding.
+The database layer uses raw aiosqlite (src/database.py) instead.
+These models are kept for reference and potential future use.
+"""
 
 from __future__ import annotations
 

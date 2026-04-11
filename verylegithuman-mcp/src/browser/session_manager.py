@@ -7,6 +7,7 @@ Supports both Patchright (Chromium) and Camoufox (Firefox) engines.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -202,6 +203,33 @@ class SessionManager:
             else:
                 content = await session.page.inner_text("body")
         return {"content": content, "format": fmt, "url": session.page.url}
+
+    async def execute_js(self, session_id: str, expression: str) -> dict:
+        session = self._get(session_id)
+        result = await session.page.evaluate(expression)
+        return {"result": result, "url": session.page.url}
+
+    async def get_cookies(self, session_id: str) -> list[dict]:
+        session = self._get(session_id)
+        return await session.context.cookies()
+
+    async def set_cookies(self, session_id: str, cookies: list[dict]) -> dict:
+        session = self._get(session_id)
+        await session.context.add_cookies(cookies)
+        return {"added": len(cookies)}
+
+    async def wait_for(self, session_id: str, selector: Optional[str] = None, text: Optional[str] = None, timeout: int = 30000) -> dict:
+        session = self._get(session_id)
+        if selector:
+            await session.page.wait_for_selector(selector, timeout=timeout)
+            return {"found": selector, "url": session.page.url}
+        elif text:
+            await session.page.wait_for_function(
+                f"() => document.body.innerText.includes({json.dumps(text)})",
+                timeout=timeout,
+            )
+            return {"found_text": text, "url": session.page.url}
+        return {"error": "Provide selector or text to wait for"}
 
     def _get(self, session_id: str) -> BrowserSession:
         session = self._sessions.get(session_id)

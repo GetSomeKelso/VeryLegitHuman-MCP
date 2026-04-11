@@ -439,9 +439,13 @@ class DatabaseManager:
         finally:
             await conn.close()
 
+    _EMAIL_UPDATE_COLS = {"provider", "address", "password", "token", "domain", "status", "last_checked_at"}
+
     async def update_email_account(self, email_id: str, updates: dict) -> Optional[dict]:
         sets, values = [], []
         for k, v in updates.items():
+            if k not in self._EMAIL_UPDATE_COLS:
+                continue
             sets.append(f"{k} = ?")
             values.append(v)
         if not sets:
@@ -672,11 +676,16 @@ class DatabaseManager:
         finally:
             await conn.close()
 
+    _PROXY_UPDATE_COLS = {"proxy_url", "country", "city", "sticky_session", "rotation_minutes",
+                          "last_rotated_at", "verified_ip", "verified_country", "verified_at", "status", "metadata_json"}
+
     async def update_proxy_config(self, proxy_id: str, updates: dict) -> Optional[dict]:
         if "metadata" in updates and isinstance(updates["metadata"], dict):
             updates["metadata_json"] = json.dumps(updates.pop("metadata"))
         sets, values = [], []
         for k, v in updates.items():
+            if k not in self._PROXY_UPDATE_COLS:
+                continue
             sets.append(f"{k} = ?")
             values.append(v)
         if not sets:
@@ -778,11 +787,15 @@ class DatabaseManager:
         finally:
             await conn.close()
 
+    _SOCIAL_ACCOUNT_UPDATE_COLS = {"platform", "username", "credentials_json", "postiz_integration_id", "status"}
+
     async def update_social_account(self, account_id: str, updates: dict) -> Optional[dict]:
         if "credentials" in updates and isinstance(updates["credentials"], dict):
             updates["credentials_json"] = json.dumps(updates.pop("credentials"))
         sets, values = [], []
         for k, v in updates.items():
+            if k not in self._SOCIAL_ACCOUNT_UPDATE_COLS:
+                continue
             sets.append(f"{k} = ?")
             values.append(v)
         if not sets:
@@ -852,6 +865,8 @@ class DatabaseManager:
         finally:
             await conn.close()
 
+    _POST_UPDATE_COLS = {"content", "media_urls_json", "scheduled_at", "posted_at", "postiz_post_id", "status", "engagement_json"}
+
     async def update_social_post(self, post_id: str, updates: dict) -> Optional[dict]:
         if "engagement" in updates and isinstance(updates["engagement"], dict):
             updates["engagement_json"] = json.dumps(updates.pop("engagement"))
@@ -859,6 +874,8 @@ class DatabaseManager:
             updates["media_urls_json"] = json.dumps(updates.pop("media_urls"))
         sets, values = [], []
         for k, v in updates.items():
+            if k not in self._POST_UPDATE_COLS:
+                continue
             sets.append(f"{k} = ?")
             values.append(v)
         if not sets:

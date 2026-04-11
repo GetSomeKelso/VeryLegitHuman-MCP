@@ -76,6 +76,7 @@ PLATFORM_CONSTRAINTS: dict[str, dict] = {
     "bluesky": {
         "char_limit": 300,
         "max_hashtags": 3,
+        "max_media": 4,
         "supports_threads": True,
         "requires_media": False,
         "best_practices": (
@@ -86,7 +87,7 @@ PLATFORM_CONSTRAINTS: dict[str, dict] = {
     },
     "tiktok": {
         "caption_char_limit": 2200,
-        "max_hashtags": 5,
+        "max_hashtags": 10,
         "requires_media": True,
         "media_type": "video",
         "best_practices": (

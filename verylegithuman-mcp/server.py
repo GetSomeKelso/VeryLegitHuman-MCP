@@ -13,10 +13,13 @@ Built on FastMCP 3.x with aiosqlite persistence. 54 tools total.
 import json
 import logging
 import sys
+import time
 from contextlib import asynccontextmanager
+from datetime import datetime
 from typing import Optional
 
 from fastmcp import Context, FastMCP
+from fastmcp.server.middleware import Middleware
 
 from src.config import DATA_DIR, DB_DIR, FACES_DIR
 from src.database import DatabaseManager
@@ -89,11 +92,103 @@ mcp = FastMCP(
     name="VeryLegitHuman MCP",
     instructions=(
         "VeryLegitHuman MCP server for authorized OSINT and red team operations. "
-        "54 tools across identity generation, email/phone provisioning, stealth browser automation, "
+        "60 tools across identity generation, email/phone provisioning, stealth browser automation, "
         "OpSec infrastructure (proxies, Tor, VPN, geolocation), and social history building."
     ),
     lifespan=lifespan,
 )
+
+
+# ---------------------------------------------------------------------------
+# Security Middleware — OWASP hardening for ALL tool calls
+# ---------------------------------------------------------------------------
+
+class SecurityMiddleware(Middleware):
+    """Intercepts every tool call to apply input validation, error handling,
+    output sanitization, rate limiting, and audit logging.
+
+    Addresses: MCP01-MCP10, LLM01-LLM08 from OWASP frameworks.
+    """
+
+    async def on_call_tool(self, context, call_next):
+        params = context.message
+        tool_name = params.name
+        arguments = params.arguments or {}
+        start = time.time()
+
+        # 1. Audit log (MCP08) — log arg keys only, never values
+        call_id = audit_log_call(tool_name, arguments)
+
+        # 2. Input sanitization (MCP05) — string limits, control chars, numeric clamping
+        try:
+            sanitized = sanitize_arguments(tool_name, arguments)
+            # Update arguments in-place (frozen dataclass workaround: create new context)
+            if sanitized != arguments:
+                from mcp.types import CallToolRequestParams
+                new_params = CallToolRequestParams(name=tool_name, arguments=sanitized)
+                context = context.copy(message=new_params)
+        except ValidationError as e:
+            audit_log_result(tool_name, call_id, False, (time.time() - start) * 1000)
+            from fastmcp.tools.base import ToolResult
+            from mcp.types import TextContent
+            return ToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(e)}))])
+
+        # 3. Rate limiting (MCP02) — check provider-specific limits
+        rate_key = self._get_rate_key(tool_name, arguments)
+        if rate_key and not rate_limiter.check(rate_key):
+            wait = rate_limiter.wait_time(rate_key)
+            audit_log_result(tool_name, call_id, False, (time.time() - start) * 1000)
+            from fastmcp.tools.base import ToolResult
+            from mcp.types import TextContent
+            return ToolResult(content=[TextContent(type="text", text=json.dumps({"error": f"Rate limited ({rate_key}). Retry in {wait:.0f}s"}))])
+
+        # 4. Execute tool with error wrapping (MCP03, LLM07)
+        try:
+            result = await call_next(context)
+        except Exception as e:
+            elapsed = (time.time() - start) * 1000
+            audit_log_result(tool_name, call_id, False, elapsed)
+            logger.error("Tool %s failed: %s", tool_name, e)
+            from fastmcp.tools.base import ToolResult
+            from mcp.types import TextContent
+            return ToolResult(content=[TextContent(type="text", text=json.dumps({"error": str(e)}))])
+
+        # 5. Output sanitization (MCP06, LLM02) — redact passwords, strip scripts, truncate
+        if result and result.content:
+            for i, item in enumerate(result.content):
+                if hasattr(item, "text") and item.text:
+                    try:
+                        data = json.loads(item.text)
+                        data = sanitize_tool_output(tool_name, data)
+                        from mcp.types import TextContent
+                        result.content[i] = TextContent(type="text", text=json.dumps(data, default=str))
+                    except (json.JSONDecodeError, TypeError):
+                        pass  # Non-JSON content, leave as-is
+
+        # 6. Audit log completion
+        elapsed = (time.time() - start) * 1000
+        audit_log_result(tool_name, call_id, True, elapsed)
+
+        # 7. Elevated logging for sensitive tools
+        if tool_name in SENSITIVE_TOOLS:
+            logger.warning("SENSITIVE tool called: %s (%.0fms)", tool_name, elapsed)
+
+        return result
+
+    def _get_rate_key(self, tool_name: str, arguments: dict) -> Optional[str]:
+        """Map tool calls to rate limiter keys."""
+        if tool_name == "create_email":
+            return arguments.get("provider", "mailtm")
+        if tool_name == "check_inbox":
+            return arguments.get("provider", "default")
+        if tool_name == "launch_browser":
+            return "browser_launch"
+        if tool_name in ("schedule_post", "post_now"):
+            return "postiz"
+        return None
+
+
+mcp.add_middleware(SecurityMiddleware())
 
 
 # ---------------------------------------------------------------------------
@@ -456,6 +551,11 @@ async def set_persona_face(
         source: Source identifier (e.g., "manual", "generated_photos", "tpdne").
     """
     db = _get_db(ctx)
+    if face_url:
+        try:
+            face_url = validate_url(face_url)
+        except ValidationError as e:
+            return {"error": str(e)}
     face_ref = face_path or face_url
     if not face_ref:
         return {"error": "Provide either face_path or face_url"}
@@ -686,8 +786,6 @@ async def check_inbox(
             m["email_account_id"] = account["id"]
             await db.save_email_message(m)
 
-        # Update last_checked_at
-        from datetime import datetime
         await db.update_email_account(account["id"], {"last_checked_at": datetime.utcnow().isoformat()})
 
         return {"account": account["address"], "provider": provider, "message_count": len(messages), "messages": messages}
@@ -1006,7 +1104,18 @@ async def launch_browser(
     sessions = _get_sessions(ctx)
     proxy = None
     if proxy_server:
+        try:
+            validate_url(proxy_server, allow_internal=True)
+        except ValidationError as e:
+            return {"error": str(e)}
         proxy = {"server": proxy_server, "username": proxy_username, "password": proxy_password}
+    elif persona_id:
+        # Auto-wire: fetch persona's proxy config if no explicit proxy given
+        db = _get_db(ctx)
+        proxy_config = await db.get_proxy_for_persona(persona_id)
+        if proxy_config and proxy_config.get("proxy_url"):
+            proxy = {"server": proxy_config["proxy_url"]}
+            logger.info("Auto-wired proxy for persona %s: %s", persona_id[:8], proxy_config["provider"])
 
     try:
         session = await sessions.create_session(
@@ -1321,7 +1430,6 @@ async def rotate_proxy(
         new_proxy = proxy_manager.rotate_session(
             config["proxy_url"], config["provider"], config.get("country", "us"), config.get("city"),
         )
-        from datetime import datetime
         await db.update_proxy_config(config["id"], {
             "proxy_url": new_proxy["proxy_url"],
             "sticky_session": new_proxy.get("sticky_session", ""),
@@ -1578,6 +1686,8 @@ async def register_social_account(
     platform: str,
     username: str,
     access_token: Optional[str] = None,
+    email: Optional[str] = None,
+    password: Optional[str] = None,
     postiz_integration_id: Optional[str] = None,
 ) -> dict:
     """Link a social media account to a persona.
@@ -1585,11 +1695,17 @@ async def register_social_account(
     Does NOT create the account on the platform — use browser tools for that.
     This registers it in the DB for posting and tracking.
 
+    For Twikit (X/Twitter): provide username + email + password.
+    For PRAW (Reddit): provide username + password.
+    For Postiz: provide postiz_integration_id.
+
     Args:
         persona_id: UUID of the persona.
         platform: "x", "reddit", "linkedin", "instagram", "mastodon", etc.
         username: Platform handle/username.
         access_token: Optional API token or access credential.
+        email: Optional email for platforms requiring it (X/Twitter via Twikit).
+        password: Optional password for direct posting (Twikit, PRAW).
         postiz_integration_id: Optional Postiz integration ID for scheduling.
     """
     db = _get_db(ctx)
@@ -1599,8 +1715,15 @@ async def register_social_account(
         "username": username,
         "postiz_integration_id": postiz_integration_id,
     }
+    creds = {}
     if access_token:
-        data["credentials"] = {"access_token": access_token}
+        creds["access_token"] = access_token
+    if email:
+        creds["email"] = email
+    if password:
+        creds["password"] = password
+    if creds:
+        data["credentials"] = creds
     saved = await db.create_social_account(data)
     logger.info("Registered social account: %s on %s", username, platform)
     return saved
@@ -1802,7 +1925,6 @@ async def post_now(
             return {"error": f"Direct posting not supported for {platform}. Use schedule_post with Postiz instead."}
 
         # Save to DB
-        from datetime import datetime
         post_data = {
             "social_account_id": account["id"],
             "platform": platform.lower(),
@@ -1927,6 +2049,165 @@ async def record_engagement(
     db = _get_db(ctx)
     engagement = {"likes": likes, "shares": shares, "comments": comments}
     result = await db.update_social_post(post_id, {"engagement": engagement})
+    if not result:
+        return {"error": "Post not found", "post_id": post_id}
+    return result
+
+
+# ===========================================================================
+# TOOL 55: browser_execute_js
+# ===========================================================================
+
+@mcp.tool
+async def browser_execute_js(
+    ctx: Context,
+    session_id: str,
+    expression: str,
+) -> dict:
+    """Execute JavaScript on the current page.
+
+    Use for complex interactions, extracting dynamic content, or bypassing
+    client-side validation. Returns the JS expression's return value.
+
+    Args:
+        session_id: UUID of the browser session.
+        expression: JavaScript expression to evaluate (e.g., "document.title").
+    """
+    sessions = _get_sessions(ctx)
+    try:
+        return await sessions.execute_js(session_id, expression)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ===========================================================================
+# TOOL 56: browser_cookies
+# ===========================================================================
+
+@mcp.tool
+async def browser_cookies(
+    ctx: Context,
+    session_id: str,
+    action: str = "get",
+    cookies: Optional[list[dict]] = None,
+) -> dict:
+    """Get or set cookies on a browser session.
+
+    Use 'get' to export cookies for session persistence.
+    Use 'set' to import cookies to restore a previous login state.
+
+    Args:
+        session_id: UUID of the browser session.
+        action: "get" to retrieve all cookies, "set" to add cookies.
+        cookies: List of cookie dicts for 'set' action (name, value, domain, path required).
+    """
+    sessions = _get_sessions(ctx)
+    try:
+        if action == "get":
+            cookie_list = await sessions.get_cookies(session_id)
+            return {"cookies": cookie_list, "count": len(cookie_list)}
+        elif action == "set":
+            if not cookies:
+                return {"error": "Provide cookies list for 'set' action"}
+            return await sessions.set_cookies(session_id, cookies)
+        else:
+            return {"error": f"Unknown action: {action}. Use 'get' or 'set'."}
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ===========================================================================
+# TOOL 57: browser_wait_for
+# ===========================================================================
+
+@mcp.tool
+async def browser_wait_for(
+    ctx: Context,
+    session_id: str,
+    selector: Optional[str] = None,
+    text: Optional[str] = None,
+    timeout: int = 30000,
+) -> dict:
+    """Wait for an element to appear or text to become visible on the page.
+
+    Essential for dynamic pages where content loads asynchronously.
+
+    Args:
+        session_id: UUID of the browser session.
+        selector: CSS selector to wait for (e.g., "#login-form", ".success-message").
+        text: Text string to wait for on the page.
+        timeout: Maximum wait time in milliseconds (default 30000).
+    """
+    sessions = _get_sessions(ctx)
+    try:
+        return await sessions.wait_for(session_id, selector=selector, text=text, timeout=timeout)
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# ===========================================================================
+# TOOL 58: delete_persona
+# ===========================================================================
+
+@mcp.tool
+async def delete_persona(
+    ctx: Context,
+    persona_id: str,
+) -> dict:
+    """Permanently delete a persona and all associated data.
+
+    This cascades: deletes notes, but email/phone/social/proxy configs
+    have their persona_id set to NULL (preserved for audit trail).
+
+    Args:
+        persona_id: UUID of the persona to delete.
+    """
+    db = _get_db(ctx)
+    deleted = await db.delete_persona(persona_id)
+    if not deleted:
+        return {"error": "Persona not found", "persona_id": persona_id}
+    return {"persona_id": persona_id, "status": "deleted"}
+
+
+# ===========================================================================
+# TOOL 59: add_persona_note
+# ===========================================================================
+
+@mcp.tool
+async def add_persona_note(
+    ctx: Context,
+    persona_id: str,
+    note: str,
+) -> dict:
+    """Add a freeform note to a persona.
+
+    Use for tracking operational details, account credentials,
+    behavioral observations, or any context that doesn't fit structured fields.
+
+    Args:
+        persona_id: UUID of the persona.
+        note: The note text to add.
+    """
+    db = _get_db(ctx)
+    return await db.add_note(persona_id, note)
+
+
+# ===========================================================================
+# TOOL 60: cancel_post
+# ===========================================================================
+
+@mcp.tool
+async def cancel_post(
+    ctx: Context,
+    post_id: str,
+) -> dict:
+    """Cancel a scheduled social media post.
+
+    Args:
+        post_id: UUID of the post to cancel.
+    """
+    db = _get_db(ctx)
+    result = await db.update_social_post(post_id, {"status": "cancelled"})
     if not result:
         return {"error": "Post not found", "post_id": post_id}
     return result

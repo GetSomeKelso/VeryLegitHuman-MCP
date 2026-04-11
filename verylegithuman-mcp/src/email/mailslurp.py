@@ -1,11 +1,12 @@
 """MailSlurp SDK wrapper for email provisioning.
 
 Requires API key (env var MAILSLURP_API_KEY).
-Provides per-inbox isolation, webhooks, and custom domains.
+All sync SDK calls wrapped in asyncio.to_thread to avoid blocking the event loop.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Optional
 
@@ -22,7 +23,6 @@ except ImportError:
 
 
 def _check_available() -> None:
-    """Raise if MailSlurp is not configured."""
     if not _SDK_AVAILABLE:
         raise RuntimeError("mailslurp-client not installed. Run: pip install mailslurp-client")
     if not MAILSLURP_API_KEY:
@@ -30,26 +30,16 @@ def _check_available() -> None:
 
 
 def _get_config():
-    """Create MailSlurp API configuration."""
     _check_available()
     config = mailslurp_client.Configuration()
     config.api_key["x-api-key"] = MAILSLURP_API_KEY
     return config
 
 
-async def create_inbox(name: Optional[str] = None) -> dict:
-    """Create a new MailSlurp inbox.
-
-    Returns dict with: address, inbox_id, provider.
-    Note: MailSlurp SDK is synchronous, so we run it directly.
-    """
-    _check_available()
+def _sync_create_inbox():
     config = _get_config()
-
     with mailslurp_client.ApiClient(config) as api_client:
-        inbox_api = mailslurp_client.InboxControllerApi(api_client)
-        inbox = inbox_api.create_inbox_with_defaults()
-
+        inbox = mailslurp_client.InboxControllerApi(api_client).create_inbox_with_defaults()
     return {
         "address": inbox.email_address,
         "inbox_id": inbox.id,
@@ -58,15 +48,10 @@ async def create_inbox(name: Optional[str] = None) -> dict:
     }
 
 
-async def get_messages(inbox_id: str, limit: int = 20) -> list[dict]:
-    """Get messages from a MailSlurp inbox."""
-    _check_available()
+def _sync_get_messages(inbox_id: str, limit: int):
     config = _get_config()
-
     with mailslurp_client.ApiClient(config) as api_client:
-        inbox_api = mailslurp_client.InboxControllerApi(api_client)
-        emails = inbox_api.get_emails(inbox_id, size=limit, sort="DESC")
-
+        emails = mailslurp_client.InboxControllerApi(api_client).get_emails(inbox_id, size=limit, sort="DESC")
     return [
         {
             "id": str(e.id),
@@ -80,15 +65,10 @@ async def get_messages(inbox_id: str, limit: int = 20) -> list[dict]:
     ]
 
 
-async def read_message(email_id: str) -> dict:
-    """Read a specific email by ID."""
-    _check_available()
+def _sync_read_message(email_id: str):
     config = _get_config()
-
     with mailslurp_client.ApiClient(config) as api_client:
-        email_api = mailslurp_client.EmailControllerApi(api_client)
-        email = email_api.get_email(email_id)
-
+        email = mailslurp_client.EmailControllerApi(api_client).get_email(email_id)
     return {
         "id": str(email.id),
         "from_address": str(getattr(email, "from_", "")),
@@ -99,13 +79,28 @@ async def read_message(email_id: str) -> dict:
     }
 
 
-async def delete_inbox(inbox_id: str) -> bool:
-    """Delete a MailSlurp inbox."""
-    _check_available()
+def _sync_delete_inbox(inbox_id: str):
     config = _get_config()
-
     with mailslurp_client.ApiClient(config) as api_client:
-        inbox_api = mailslurp_client.InboxControllerApi(api_client)
-        inbox_api.delete_inbox(inbox_id)
-
+        mailslurp_client.InboxControllerApi(api_client).delete_inbox(inbox_id)
     return True
+
+
+async def create_inbox(name: Optional[str] = None) -> dict:
+    _check_available()
+    return await asyncio.to_thread(_sync_create_inbox)
+
+
+async def get_messages(inbox_id: str, limit: int = 20) -> list[dict]:
+    _check_available()
+    return await asyncio.to_thread(_sync_get_messages, inbox_id, limit)
+
+
+async def read_message(email_id: str) -> dict:
+    _check_available()
+    return await asyncio.to_thread(_sync_read_message, email_id)
+
+
+async def delete_inbox(inbox_id: str) -> bool:
+    _check_available()
+    return await asyncio.to_thread(_sync_delete_inbox, inbox_id)
