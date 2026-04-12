@@ -12,18 +12,19 @@
 
 ## Architecture
 - FastMCP 3.x server (stdio protocol, local Python)
-- 54 tools across 6 phases, OWASP-hardened
-- `server.py` → tool definitions (decorated functions) → service modules
-- `src/database.py` — async aiosqlite for persona/email/phone/proxy/social persistence
-- `src/security.py` — input validation, SSRF blocking, output sanitization, audit logging, rate limiting
+- 60 tools across 6 phases, OWASP-hardened
+- `server.py` → SecurityMiddleware (intercepts ALL tool calls) → tool definitions → service modules
+- `src/database.py` — async aiosqlite for persona/email/phone/proxy/social persistence (9 tables)
+- `src/security.py` — SecurityMiddleware + input validation, SSRF blocking, output sanitization, audit logging, rate limiting
+- All sync SDKs (Twilio, PRAW, MailSlurp, Stem) wrapped in `asyncio.to_thread()` to prevent event loop blocking
 
 ## Phases
 - Phase 1: Identity generation + persistence (12 tools)
 - Phase 2: Email/phone provisioning (10 tools)
-- Phase 3: Stealth browser automation — Patchright (Chromium) + Camoufox (Firefox) (10 tools)
+- Phase 3: Stealth browser automation — Patchright (Chromium) + Camoufox (Firefox) (13 tools, incl. execute_js, cookies, wait_for)
 - Phase 4: OpSec infrastructure — proxies, Tor, Mullvad VPN, geolocation (12 tools)
 - Phase 5: Social history building — Postiz, Reddit/PRAW, X/Twikit (10 tools)
-- Phase 6: OWASP MCP Top 10 + LLM Top 10 audit & hardening (0 new tools)
+- Phase 6: OWASP MCP Top 10 + LLM Top 10 audit & hardening (+3 utility tools: delete_persona, add_persona_note, cancel_post)
 
 ## Common Pitfalls
 - Use `python` (not `python3`) on Windows

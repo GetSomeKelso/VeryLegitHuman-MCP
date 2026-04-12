@@ -4,8 +4,8 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "verylegithuman-mcp"
-version = "0.1.0"
-description = "VeryLegitHuman MCP — 54-tool persona lifecycle server for authorized OSINT and red team operations"
+version = "1.0.0"
+description = "VeryLegitHuman MCP — 60-tool persona lifecycle server for authorized OSINT and red team operations"
 requires-python = ">=3.11"
 dependencies = [
     "fastmcp>=2.0.0",
@@ -15,6 +15,16 @@ dependencies = [
     "sqlalchemy>=2.0.40",
     "aiosqlite>=0.22.0",
     "pydantic>=2.10.0",
+    "twilio>=9.0.0",
+    "mailslurp-client>=16.0.0",
+    "patchright>=0.5.0",
+    "camoufox[geoip]>=0.4.0",
+    "ipinfo>=5.0.0",
+    "geoip2>=4.0.0",
+    "stem>=1.8.0",
+    "torpy>=1.1.0",
+    "praw>=7.8.0",
+    "twikit>=2.0.0",
 ]
 
 [project.optional-dependencies]

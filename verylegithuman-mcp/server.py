@@ -7,7 +7,7 @@ Phase 4: OpSec infrastructure (proxies, Tor, Mullvad VPN, IP geolocation)
 Phase 5: Social history building (Postiz, Reddit/PRAW, X/Twikit, scheduling)
 Phase 6: OWASP MCP Top 10 + LLM Top 10 hardening (input validation, SSRF blocking,
          output sanitization, audit logging, rate limiting)
-Built on FastMCP 3.x with aiosqlite persistence. 54 tools total.
+Built on FastMCP 3.x with aiosqlite persistence. 60 tools total.
 """
 
 import json

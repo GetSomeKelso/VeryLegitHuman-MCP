@@ -1,6 +1,6 @@
 # VeryLegitHuman MCP
 
-A 54-tool [Model Context Protocol](https://modelcontextprotocol.io/) server for authorized OSINT and red team persona lifecycle management. Built on [FastMCP 3.x](https://gofastmcp.com/) with async SQLite persistence.
+A 60-tool [Model Context Protocol](https://modelcontextprotocol.io/) server for authorized OSINT and red team persona lifecycle management. Built on [FastMCP 3.x](https://gofastmcp.com/) with async SQLite persistence.
 
 > **Authorization Required.** This tool is designed for authorized penetration testing, red team engagements, CTF competitions, security research, and defensive OSINT. Do not use it without explicit written authorization from system owners.
 
@@ -17,7 +17,7 @@ VeryLegitHuman manages the full lifecycle of synthetic personas for authorized o
 5. **Build** social media presence with scheduled posting across 18+ platforms
 6. **Verify** operational security (OpSec) — exit IP matches persona's claimed location
 
-All 54 tools are exposed via MCP and callable from Claude Desktop, Claude Code, or any MCP-compatible client.
+All 60 tools are exposed via MCP and callable from Claude Desktop, Claude Code, or any MCP-compatible client.
 
 ---
 
@@ -25,10 +25,10 @@ All 54 tools are exposed via MCP and callable from Claude Desktop, Claude Code, 
 
 ```
 verylegithuman-mcp/
-  server.py                    # FastMCP server (54 tools + 2 resources)
+  server.py                    # FastMCP server (60 tools + 2 resources)
   src/
     config.py                  # Centralized config with env var overrides
-    database.py                # Async SQLite (aiosqlite) — 7 tables
+    database.py                # Async SQLite (aiosqlite) — 9 tables
     security.py                # OWASP hardening (SSRF, validation, redaction, audit)
     verification.py            # OTP/link extraction from emails/SMS
     models.py                  # Pydantic models
@@ -131,7 +131,7 @@ Linux/macOS:
 
 ---
 
-## Tools (54)
+## Tools (60)
 
 ### Phase 1: Identity (12 tools)
 
@@ -165,11 +165,11 @@ Linux/macOS:
 | `check_sms` | Check for received SMS with auto-verification extraction |
 | `release_phone` | Release/dispose of a phone number |
 
-### Phase 3: Browser Automation (10 tools)
+### Phase 3: Browser Automation (13 tools)
 
 | Tool | Description |
 |------|-------------|
-| `launch_browser` | Launch stealth Chromium (Patchright) or Firefox (Camoufox) session |
+| `launch_browser` | Launch stealth Chromium (Patchright) or Firefox (Camoufox) session. Auto-wires persona's proxy if configured. |
 | `close_browser` | Close a browser session |
 | `list_browser_sessions` | List active sessions with URLs and engines |
 | `browser_goto` | Navigate to URL (SSRF-protected) |
@@ -179,6 +179,9 @@ Linux/macOS:
 | `browser_select` | Select dropdown option |
 | `browser_screenshot` | Capture page screenshot (JPEG + base64) |
 | `browser_get_text` | Extract visible text or HTML from page |
+| `browser_execute_js` | Execute JavaScript on the page for complex interactions |
+| `browser_cookies` | Get or set cookies for session persistence across restarts |
+| `browser_wait_for` | Wait for a CSS selector or text to appear on the page |
 
 ### Phase 4: OpSec Infrastructure (12 tools)
 
@@ -201,7 +204,7 @@ Linux/macOS:
 
 | Tool | Description |
 |------|-------------|
-| `register_social_account` | Link a social account to a persona |
+| `register_social_account` | Link a social account to a persona (supports email + password for Twikit/PRAW) |
 | `list_social_accounts` | List social accounts |
 | `update_social_account` | Update account status or details |
 | `get_platform_constraints` | Get posting rules for 10+ platforms |
@@ -211,6 +214,14 @@ Linux/macOS:
 | `get_activity_summary` | Get posting activity summary |
 | `generate_posting_schedule_tool` | Generate realistic posting schedule with human-like jitter |
 | `record_engagement` | Record engagement metrics on a post |
+
+### Audit Remediation (3 tools)
+
+| Tool | Description |
+|------|-------------|
+| `delete_persona` | Permanently delete a persona and all associated notes |
+| `add_persona_note` | Add freeform operational notes to a persona |
+| `cancel_post` | Cancel a scheduled social media post |
 
 ---
 
@@ -278,22 +289,25 @@ export VLH_AUDIT_LOG=true         # Structured audit logging
 
 ## Security (Phase 6: OWASP Hardening)
 
-The server is hardened against the OWASP MCP Top 10 and OWASP LLM Top 10:
+A `SecurityMiddleware` class intercepts every tool call universally — no tool can bypass validation. The middleware applies input sanitization, error wrapping, output redaction, rate limiting, and structured audit logging to all 60 tools in a single interception point.
 
 | Protection | Implementation |
 |------------|----------------|
-| **SSRF Blocking** | `file://`, `javascript:`, `data:` schemes blocked. Internal IPs (127.x, 10.x, 172.16-31.x, 192.168.x) blocked. |
-| **Input Validation** | UUID format validation, CSS selector injection prevention, string length limits, enum enforcement |
-| **Output Sanitization** | Passwords/tokens masked in responses, `<script>` tags stripped from email HTML, large outputs truncated (50KB) |
-| **Audit Logging** | Structured JSON logs for every tool call (call ID, tool name, arg keys only — never values) |
+| **SecurityMiddleware** | FastMCP middleware intercepts ALL tool calls. Input sanitization, error wrapping, output redaction, rate limiting, and audit logging applied universally. |
+| **SSRF Blocking** | `file://`, `javascript:`, `data:` schemes blocked. Internal IPs (127.x, 10.x, 172.16-31.x, 192.168.x) blocked on `browser_goto`, `set_persona_face`, `launch_browser` proxy. |
+| **Input Validation** | UUID format validation, CSS selector injection prevention, string length limits, enum enforcement, control character stripping, numeric clamping |
+| **Output Sanitization** | Passwords/tokens masked in all responses automatically, `<script>` tags stripped from email HTML, large outputs truncated (50KB) |
+| **Audit Logging** | Structured JSON logs for every tool call (call ID, tool name, arg keys only — never values). Sensitive tools logged at WARNING level. |
 | **Rate Limiting** | Per-provider sliding window: Mail.tm 8/s, Guerrilla 4/s, browser launches 1/5s, Postiz 30/hr |
 | **Resource Limits** | Max browser sessions, email accounts, phone numbers all configurable and clamped |
+| **Async Safety** | All sync SDKs (Twilio, PRAW, MailSlurp, Stem) wrapped in `asyncio.to_thread()` to prevent event loop blocking |
+| **SQL Safety** | Column whitelists on all UPDATE queries prevent SQL injection via dynamic column names |
 
 ---
 
 ## Database
 
-SQLite with WAL mode, 7 tables:
+SQLite with WAL mode, 9 tables:
 
 - `personas` — identity records with nested address, usernames, metadata
 - `persona_notes` — freeform notes per persona
